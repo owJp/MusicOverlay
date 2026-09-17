@@ -69,6 +69,7 @@ button,input,select{font:inherit;color:inherit}
   backdrop-filter:blur(8px)
 }
 .np[data-theme="neon"]::after{background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 16%,transparent))}
+.np-fx{position:absolute;inset:0;z-index:0;pointer-events:none;display:block}
 .np-art{width:86px;height:86px;flex:0 0 auto;border-radius:calc(var(--radius) - 6px);overflow:hidden;background:#000;position:relative;z-index:1;box-shadow:0 8px 20px rgba(0,0,0,.45)}
 .np[data-theme="neon"] .np-art{box-shadow:0 0 16px -4px var(--accent)}
 .np-art img{width:100%;height:100%;object-fit:cover;display:block}
@@ -106,6 +107,8 @@ input:hover,select:hover{border-color:rgba(255,255,255,.18)}
 .stack{display:grid;gap:10px}
 .seg{display:grid;grid-template-columns:1fr 1fr;background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px}
 .seg.three{grid-template-columns:1fr 1fr 1fr}
+.seg.four{grid-template-columns:1fr 1fr 1fr 1fr}
+.caption{font-size:11.5px;color:var(--muted);margin-top:-2px}
 .seg button{background:transparent;border:0;border-radius:7px;padding:8px 6px;cursor:pointer;font-size:13px;color:var(--muted)}
 .seg button[aria-pressed="true"]{background:#2b303d;color:var(--text);font-weight:500}
 .seg.on button[aria-pressed="true"]{background:var(--amber);color:#1a1205;font-weight:700}
@@ -176,6 +179,7 @@ body[data-mode="overlay"] .solo{display:grid;place-items:center;min-height:100vh
 
       <div class="viewport" id="viewport" data-bg="clear">
         <div class="np" id="np" data-theme="ambient" data-bar="on" data-time="on" data-live="on">
+          <canvas class="np-fx" id="npFx" aria-hidden="true"></canvas>
           <span class="np-badge" id="npBadge">LIVE</span>
           <div class="np-art" id="npArt"><div class="fallback">♪</div></div>
           <div class="np-body">
@@ -242,6 +246,19 @@ body[data-mode="overlay"] .solo{display:grid;place-items:center;min-height:100vh
           </div>
           <div><label class="lb" for="fRadius">Corner rounding — <span id="radiusOut">14</span>px</label><input type="range" id="fRadius" min="0" max="34" value="14" /></div>
           <div><label class="lb" for="fWidth">Card width — <span id="widthOut">560</span>px</label><input type="range" id="fWidth" min="360" max="760" step="10" value="560" /></div>
+          <div>
+            <label class="lb">Background motion</label>
+            <div class="seg four" id="segFx">
+              <button data-v="off" aria-pressed="true">None</button>
+              <button data-v="drift" aria-pressed="false">Drift</button>
+              <button data-v="pulse" aria-pressed="false">Pulse</button>
+              <button data-v="bars" aria-pressed="false">Bars</button>
+            </div>
+          </div>
+          <div id="fxSpeedWrap" class="dim">
+            <label class="lb" for="fFxSpeed">Motion speed — <span id="fxSpeedOut">1.0</span>×</label>
+            <input type="range" id="fFxSpeed" min="10" max="300" step="5" value="100" />
+          </div>
         </div>
       </div>
 
@@ -279,9 +296,26 @@ body[data-mode="overlay"] .solo{display:grid;place-items:center;min-height:100vh
                 <button data-v="green" aria-pressed="false">Green</button>
                 <button data-v="custom" aria-pressed="false">Colour</button>
               </div></div>
-            <div><label class="lb">Scale</label>
-              <div class="seg" id="segScale"><button data-v="1" aria-pressed="false">1×</button><button data-v="2" aria-pressed="true">2×</button></div></div>
+            <div><label class="lb">Output size</label>
+              <div class="seg four" id="segScale">
+                <button data-v="1" aria-pressed="false">1×</button>
+                <button data-v="2" aria-pressed="true">2×</button>
+                <button data-v="3" aria-pressed="false">3×</button>
+                <button data-v="custom" aria-pressed="false">Set</button>
+              </div></div>
           </div>
+          <div class="dim" id="customSizeRow">
+            <div class="grid2">
+              <div class="field"><label class="lb" for="expW">Width px</label><input type="text" id="expW" value="1920" inputmode="numeric" /></div>
+              <div class="field"><label class="lb" for="expH">Height px</label><input type="text" id="expH" value="1080" inputmode="numeric" /></div>
+            </div>
+            <div class="row" style="margin-top:8px;flex-wrap:wrap">
+              <button class="tbtn" data-preset="1920x1080">1080p</button>
+              <button class="tbtn" data-preset="1080x1920">Story</button>
+              <button class="tbtn" data-preset="1080x1080">Square</button>
+            </div>
+          </div>
+          <p class="caption" id="natSize"></p>
           <div class="colorrow dim" id="bgCustomRow">
             <input type="color" id="bgPick" value="#000000" aria-label="Export background colour" />
             <input type="text" id="bgHex" value="#000000" spellcheck="false" />
@@ -321,7 +355,8 @@ const state = {
   title:"", artist:"", cover:"", duration:200, badge:"LIVE",
   bar:"on", time:"on", live:"on", theme:"ambient", radius:14, width:560,
   autoAccent:true, autoBack:true, accent:"#35d07f", back:"#3d2430",
-  exportBg:"alpha", exportColor:"#000000", scale:2
+  exportBg:"alpha", exportColor:"#000000", sizeMode:"2", expW:1920, expH:1080,
+  fx:"off", fxSpeed:1
 };
 let palette = { a1:"#2a2d38", a2:"#14161d", accent:"#35d07f", glow:"rgba(255,255,255,.1)" };
 let candidates = [];
@@ -377,6 +412,38 @@ async function getText(url, timeout=11000){
 ============================================================ */
 function spotifyId(u){ const m=(u||"").match(/track[/:]([a-zA-Z0-9]{22})/); return m?m[1]:null; }
 
+/* Browsers can't fetch spotify.com directly, so the page hops through a public
+   relay. Any one of them can be down or rate-limited, so try several. */
+const PROXIES = [
+  u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u),
+  u=>"https://api.codetabs.com/v1/proxy/?quest="+encodeURIComponent(u),
+  u=>"https://corsproxy.io/?url="+encodeURIComponent(u),
+  u=>"https://api.cors.lol/?url="+encodeURIComponent(u)
+];
+async function viaProxy(target){
+  let err=null;
+  for(const build of PROXIES){
+    try{
+      const t=await getText(build(target),10000);
+      if(t && t.length>400) return t;
+      err=new Error("empty");
+    }catch(e){ err=e; }
+  }
+  throw err||new Error("no relay answered");
+}
+function cacheGet(id){
+  try{ const v=localStorage.getItem("cue:sp:"+id); return v?JSON.parse(v):null; }catch(e){ return null; }
+}
+function cacheSet(id,data){
+  try{ localStorage.setItem("cue:sp:"+id, JSON.stringify(data)); }catch(e){}
+}
+async function spotifyOembed(url){
+  const r=await fetch("https://open.spotify.com/oembed?url="+encodeURIComponent(url));
+  if(!r.ok) throw new Error("oembed "+r.status);
+  const d=await r.json();
+  return { title:d.title||"", artist:"", cover:d.thumbnail_url||"", duration:0 };
+}
+
 function deepFindTrack(obj){
   let found=null;
   (function walk(o,depth){
@@ -405,7 +472,7 @@ function findDuration(entity){
 }
 async function readSpotify(id){
   const target="https://open.spotify.com/embed/track/"+id;
-  const html = await getText("https://api.allorigins.win/raw?url="+encodeURIComponent(target));
+  const html = await viaProxy(target);
   let out={title:"",artist:"",cover:"",duration:0};
 
   const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
@@ -498,17 +565,32 @@ async function gather(){
   $("gatherBtn").disabled=true;
   setStatus("Reading the link…");
 
-  let got=null, note="", cls="ok";
+  let got=null, note="", cls="ok", uncertain=false;
 
   if(kind==="spotify"){
     const id=spotifyId(url);
     if(!id){ $("gatherBtn").disabled=false; return setStatus("That Spotify link isn't a single track. Copy the link from a song, not an album or playlist.","err"); }
-    try{
-      got = await readSpotify(id);
-      note = "Pulled straight from Spotify — title, artist, cover and exact length.";
-    }catch(e){
-      note = "Spotify didn't answer, so this is a database match — check the artist.";
-      cls = "warn";
+
+    const cached=cacheGet(id);
+    if(cached){
+      got=cached;
+      note="Loaded from this browser's cache — title, artist, cover and exact length.";
+    }else{
+      try{
+        got = await readSpotify(id);
+        cacheSet(id,got);
+        note = "Pulled straight from Spotify — title, artist, cover and exact length.";
+      }catch(e){
+        try{
+          got = await spotifyOembed(url);
+          uncertain = true;
+          note = "Spotify's relay is busy, so only the title and cover came through. Pick the right match below for the artist and length, or type them in.";
+          cls = "warn";
+        }catch(e2){
+          $("gatherBtn").disabled=false;
+          return setStatus("Every relay refused that link just now — they're free and get rate-limited. Wait about a minute and press Gather again, or fill the fields in by hand.","err");
+        }
+      }
     }
   }
 
@@ -549,6 +631,7 @@ async function gather(){
     try{ candidates = await itunesSearch({title:state.title, artist:state.artist}); }catch(e){}
   }
   renderMatches();
+  if(uncertain) $("matches").classList.add("open");
 
   pushToFields(); render(); await recolor();
   $("gatherBtn").disabled=false;
@@ -641,6 +724,32 @@ async function recolor(){
 /* ============================================================
    render (DOM)
 ============================================================ */
+/* ---- preview motion layer (same painter as the export) ---- */
+let fxRaf=null;
+function fxFrame(now){
+  const cv=$("npFx"), card=$("np");
+  if(!cv||!card){ fxRaf=null; return; }
+  if(state.fx==="off"){
+    const x=cv.getContext("2d"); x.setTransform(1,0,0,1,0,0); x.clearRect(0,0,cv.width,cv.height);
+    fxRaf=null; return;
+  }
+  const w=card.clientWidth, h=card.clientHeight;
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){
+    cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr);
+    cv.style.width=w+"px"; cv.style.height=h+"px";
+  }
+  const x=cv.getContext("2d");
+  x.setTransform(dpr,0,0,dpr,0,0);
+  x.clearRect(0,0,w,h);
+  paintFx(x,w,h,now/1000);
+  fxRaf=requestAnimationFrame(fxFrame);
+}
+function startFx(){
+  if(state.fx==="off"){ if(fxRaf){cancelAnimationFrame(fxRaf);fxRaf=null;} fxFrame(performance.now()); return; }
+  if(!fxRaf) fxRaf=requestAnimationFrame(fxFrame);
+}
+
 function render(){
   const np=$("np");
   np.dataset.theme=state.theme;
@@ -663,6 +772,8 @@ function render(){
   }else art.innerHTML='<div class="fallback">♪</div>';
 
   tick(true);
+  startFx();
+  updateNatSize();
   buildLink();
 }
 
@@ -728,6 +839,42 @@ function cardMetrics(){
   return {pad,art,gap,w:state.width,h,showBar,showTime,bodyH,
           bodyX:pad+art+gap, bodyW:state.width-(pad+art+gap)-pad};
 }
+/* ---- background motion, drawn the same way in preview and export ---- */
+function paintFx(ctx,w,h,t){
+  if(state.fx==="off") return;
+  const [r,g,b]=palette.accentRgb||[53,208,127];
+  const T=t*state.fxSpeed;
+  ctx.save();
+  if(state.fx==="drift"){
+    const blobs=[[0.20,0.50,0.60,1.0],[0.74,0.34,0.52,0.7],[0.52,0.82,0.46,0.55]];
+    blobs.forEach((bl,i)=>{
+      const cx=(bl[0]+Math.sin(T*0.20+i*2.1)*0.17)*w;
+      const cy=(bl[1]+Math.cos(T*0.16+i*1.3)*0.28)*h;
+      const rad=Math.max(24,bl[2]*w*0.55);
+      const gg=ctx.createRadialGradient(cx,cy,0,cx,cy,rad);
+      gg.addColorStop(0,`rgba(${r},${g},${b},${0.26*bl[3]})`);
+      gg.addColorStop(1,"rgba(0,0,0,0)");
+      ctx.fillStyle=gg; ctx.fillRect(0,0,w,h);
+    });
+  }else if(state.fx==="pulse"){
+    const a=0.08+0.20*(0.5+0.5*Math.sin(T*1.2));
+    const gg=ctx.createRadialGradient(w*0.14,h*0.5,0,w*0.14,h*0.5,w*0.95);
+    gg.addColorStop(0,`rgba(${r},${g},${b},${a})`);
+    gg.addColorStop(1,"rgba(0,0,0,0)");
+    ctx.fillStyle=gg; ctx.fillRect(0,0,w,h);
+  }else if(state.fx==="bars"){
+    const n=30, bw=w/n;
+    for(let i=0;i<n;i++){
+      const ph=i*0.55;
+      const amp=(0.5+0.5*Math.sin(T*2.4+ph))*(0.45+0.55*Math.sin(T*1.1+ph*0.35));
+      const bh=h*(0.10+Math.abs(amp)*0.55);
+      ctx.fillStyle=`rgba(${r},${g},${b},0.16)`;
+      ctx.fillRect(i*bw+bw*0.16,h-bh,bw*0.68,bh);
+    }
+  }
+  ctx.restore();
+}
+
 function paintCard(ctx, t, m, off){
   const {pad,art,w,h,showBar,showTime,bodyX,bodyW,bodyH}=m;
   const R=state.radius, neon=state.theme==="neon";
@@ -735,11 +882,13 @@ function paintCard(ctx, t, m, off){
 
   // shadow + body
   ctx.save();
-  if(neon){ ctx.shadowColor=palette.accent; ctx.shadowBlur=26; }
-  else { ctx.shadowColor="rgba(0,0,0,.45)"; ctx.shadowBlur=34; ctx.shadowOffsetY=16; }
-  rr(ctx,0,0,w,h,R);
-  ctx.fillStyle = neon ? "rgba(8,9,13,.88)" : "#000";
-  ctx.fill();
+  if(neon){
+    ctx.shadowColor=palette.accent; ctx.shadowBlur=34;
+    rr(ctx,0,0,w,h,R); ctx.fillStyle="rgba(8,9,13,.95)"; ctx.fill(); ctx.fill();
+  }else{
+    ctx.shadowColor="rgba(0,0,0,.45)"; ctx.shadowBlur=34; ctx.shadowOffsetY=16;
+    rr(ctx,0,0,w,h,R); ctx.fillStyle="#000"; ctx.fill();
+  }
   ctx.restore();
 
   ctx.save();
@@ -758,6 +907,7 @@ function paintCard(ctx, t, m, off){
     rg.addColorStop(0,palette.glow); rg.addColorStop(1,"rgba(0,0,0,0)");
     ctx.fillStyle=rg; ctx.fillRect(0,0,w,h);
   }
+  paintFx(ctx,w,h,t);
 
   // artwork
   const ay=(h-art)/2;
@@ -816,6 +966,20 @@ function paintCard(ctx, t, m, off){
   }
   ctx.restore();
 
+  // outline — this is what made neon look flat in exports
+  ctx.save();
+  rr(ctx,0.5,0.5,w-1,h-1,Math.max(0,R-0.5));
+  ctx.lineWidth=1;
+  if(neon){
+    ctx.strokeStyle=palette.accent;
+    ctx.shadowColor=palette.accent; ctx.shadowBlur=16;
+    ctx.stroke(); ctx.stroke();
+    ctx.shadowBlur=0; ctx.stroke();
+  }else{
+    ctx.strokeStyle="rgba(255,255,255,.12)"; ctx.stroke();
+  }
+  ctx.restore();
+
   // badge
   if(state.live==="on" && state.badge){
     ctx.font='700 10px "Chivo",sans-serif';
@@ -828,26 +992,50 @@ function paintCard(ctx, t, m, off){
   }
   ctx.restore();
 }
+function naturalSize(){
+  const m=cardMetrics();
+  const off = state.theme==="neon" ? 30 : 34;
+  return { m, off, w:m.w+off*2, h:m.h+off*2 };
+}
 async function makeCanvas(){
   await document.fonts.ready;
   await loadArt();
-  const m=cardMetrics();
-  const off = state.theme==="neon" ? 30 : 34;
-  const c=document.createElement("canvas");
-  c.width=Math.round((m.w+off*2)*state.scale);
-  c.height=Math.round((m.h+off*2)*state.scale);
-  const ctx=c.getContext("2d");
-  ctx.scale(state.scale,state.scale);
-  return {c,ctx,m,off};
-}
-function paintFrame(ctx,c,m,off,t){
-  ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,c.width,c.height); ctx.restore();
-  if(state.exportBg!=="alpha"){
-    ctx.save(); ctx.setTransform(1,0,0,1,0,0);
-    ctx.fillStyle = state.exportBg==="green" ? "#00b140" : state.exportColor;
-    ctx.fillRect(0,0,c.width,c.height); ctx.restore();
+  const n=naturalSize();
+  let cw,ch,fit,dx,dy;
+  if(state.sizeMode==="custom"){
+    cw=clamp(state.expW||n.w,16,7680);
+    ch=clamp(state.expH||n.h,16,4320);
+    fit=Math.min(cw/n.w, ch/n.h);
+    dx=(cw-n.w*fit)/2; dy=(ch-n.h*fit)/2;
+  }else{
+    fit=+state.sizeMode||1;
+    cw=Math.round(n.w*fit); ch=Math.round(n.h*fit);
+    dx=dy=0;
   }
+  cw=Math.max(2,Math.round(cw/2)*2);   // even numbers keep video encoders happy
+  ch=Math.max(2,Math.round(ch/2)*2);
+  const c=document.createElement("canvas");
+  c.width=cw; c.height=ch;
+  return {c, ctx:c.getContext("2d"), m:n.m, off:n.off, fit, dx, dy};
+}
+function paintFrame(g,t){
+  const {c,ctx,m,off,fit,dx,dy}=g;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,c.width,c.height);
+  if(state.exportBg!=="alpha"){
+    ctx.fillStyle = state.exportBg==="green" ? "#00b140" : state.exportColor;
+    ctx.fillRect(0,0,c.width,c.height);
+  }
+  ctx.setTransform(fit,0,0,fit,dx,dy);
   paintCard(ctx,t,m,off);
+}
+function updateNatSize(){
+  const n=naturalSize();
+  const el=$("natSize"); if(!el) return;
+  const out = state.sizeMode==="custom"
+    ? `Card is ${Math.round(n.w)} × ${Math.round(n.h)} px — it will be centred and fitted inside your canvas.`
+    : `Exports at ${Math.round(n.w*(+state.sizeMode||1))} × ${Math.round(n.h*(+state.sizeMode||1))} px.`;
+  el.textContent=out;
 }
 function fileStem(){
   return ((state.artist?state.artist+" - ":"")+(state.title||"cuesheet"))
@@ -863,12 +1051,12 @@ function expStatus(t,cls){ const s=$("expStatus"); s.className="status"+(cls?" "
 async function savePng(){
   expStatus("Drawing…");
   try{
-    const {c,ctx,m,off}=await makeCanvas();
-    paintFrame(ctx,c,m,off,pos);
-    c.toBlob(b=>{
-      if(!b) return expStatus("The browser blocked the export. The cover art didn't allow it — try the Gather button again.","err");
+    const g=await makeCanvas();
+    paintFrame(g,pos);
+    g.c.toBlob(b=>{
+      if(!b) return expStatus("The browser blocked the export. The cover art didn't allow it — press Gather again.","err");
       download(b, fileStem()+".png");
-      expStatus("Saved "+c.width+"×"+c.height+" PNG"+(state.exportBg==="alpha"?" with a transparent background.":"."),"ok");
+      expStatus("Saved "+g.c.width+"×"+g.c.height+" PNG"+(state.exportBg==="alpha"?" with a transparent background.":"."),"ok");
     },"image/png");
   }catch(e){ expStatus("Couldn't draw the card: "+e.message,"err"); }
 }
@@ -889,9 +1077,10 @@ async function recordVideo(){
   const mime=pickMime();
   if(!mime) return expStatus("No supported video format in this browser.","err");
 
-  let c,ctx,m,off;
-  try{ ({c,ctx,m,off}=await makeCanvas()); }
+  let g;
+  try{ g=await makeCanvas(); }
   catch(e){ return expStatus("Couldn't draw the card: "+e.message,"err"); }
+  const c=g.c;
 
   const stream=c.captureStream(30);
   const chunks=[];
@@ -915,7 +1104,7 @@ async function recordVideo(){
   recorder.start(1000);
   (function frame(now){
     const t=(now-t0)/1000;
-    paintFrame(ctx,c,m,off,Math.min(t,state.duration));
+    paintFrame(g,Math.min(t,state.duration));
     $("recText").textContent="Recording "+fmt(Math.min(t,state.duration))+" / "+fmt(state.duration);
     if(t>=state.duration){ recorder && recorder.state!=="inactive" && recorder.stop(); return; }
     recRaf=requestAnimationFrame(frame);
@@ -959,11 +1148,24 @@ function init(){
   bindSeg("segBar","bar"); bindSeg("segTime","time"); bindSeg("segLive","live");
   bindSeg("segTheme","theme",()=>{ $("backdropGroup").classList.toggle("dim",state.theme==="neon"); recolor(); });
   bindSeg("segBg","exportBg",()=>$("bgCustomRow").classList.toggle("dim",state.exportBg!=="custom"));
+  bindSeg("segFx","fx",()=>{ $("fxSpeedWrap").classList.toggle("dim",state.fx==="off"); startFx(); });
+  $("fFxSpeed").addEventListener("input",e=>{
+    state.fxSpeed=(+e.target.value)/100;
+    $("fxSpeedOut").textContent=state.fxSpeed.toFixed(1);
+  });
   $("segScale").addEventListener("click",e=>{
     const b=e.target.closest("button"); if(!b) return;
     [...$("segScale").querySelectorAll("button")].forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
-    state.scale=+b.dataset.v;
+    state.sizeMode=b.dataset.v;
+    $("customSizeRow").classList.toggle("dim",state.sizeMode!=="custom");
+    updateNatSize();
   });
+  $("expW").addEventListener("input",e=>{ state.expW=parseInt(e.target.value,10)||0; });
+  $("expH").addEventListener("input",e=>{ state.expH=parseInt(e.target.value,10)||0; });
+  document.querySelectorAll("[data-preset]").forEach(b=>b.addEventListener("click",()=>{
+    const [w,h]=b.dataset.preset.split("x").map(Number);
+    state.expW=w; state.expH=h; $("expW").value=w; $("expH").value=h;
+  }));
 
   $("fRadius").addEventListener("input",e=>{ state.radius=+e.target.value; $("radiusOut").textContent=e.target.value; render(); });
   $("fWidth").addEventListener("input",e=>{ state.width=+e.target.value; $("widthOut").textContent=e.target.value; render(); });
@@ -1014,6 +1216,7 @@ function buildLink(){
   p.set("theme",state.theme); p.set("r",String(state.radius)); p.set("w",String(state.width));
   if(!state.autoAccent) p.set("ac",state.accent.replace("#",""));
   if(!state.autoBack) p.set("bc",state.back.replace("#",""));
+  if(state.fx!=="off"){ p.set("fx",state.fx); p.set("fxs",String(state.fxSpeed)); }
   const url=location.origin+location.pathname+"?"+p.toString();
   const box=$("outUrl"); if(box) box.textContent=url;
   return url;
@@ -1035,6 +1238,7 @@ function bootOverlay(q){
   state.width=clamp(parseInt(q.get("w")||"560",10),300,900);
   if(q.get("ac")){ state.autoAccent=false; state.accent="#"+q.get("ac"); }
   if(q.get("bc")){ state.autoBack=false; state.back="#"+q.get("bc"); }
+  if(q.get("fx")){ state.fx=q.get("fx"); state.fxSpeed=clamp(parseFloat(q.get("fxs"))||1,0.1,3); }
 
   $("solo").appendChild($("np"));
   render(); recolor();
